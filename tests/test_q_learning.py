@@ -94,8 +94,12 @@ def test_q_table_update():
     state, _ = env.reset()
     action = (0, 0, 0, 0)  # Simple action
 
-    # Initial Q-value should be 0
+    # Initialize Q-table entry for the state
     state_hash = agent.get_state_hash(state, 0)
+    if state_hash not in agent.q_table:
+        agent.q_table[state_hash] = {}
+
+    # Initial Q-value should be 0
     initial_q = agent.q_table[state_hash].get(action, 0)
     assert initial_q == 0
 

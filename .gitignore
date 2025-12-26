@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+__pycache__
+.mypy_cache
+.ruff_cache
+.pytest_cache
+
+# Tools and generated data
+tools/benchmarks/*.pkl
+integration_tests/*.log
+backend/*.log
+frontend/*.log
+
+# Data files
+*.pkl
+!q_agent.pkl

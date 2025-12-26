@@ -22,4 +22,3 @@ frontend/*.log
 
 # Data files
 *.pkl
-!q_agent.pkl

@@ -1,7 +1,6 @@
 """Basic functionality tests that don't require PyTorch."""
 
 import sys
-import numpy as np
 
 sys.path.insert(0, ".")
 

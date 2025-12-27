@@ -5,7 +5,6 @@ Testable FastAPI app without automatic server startup.
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-
 # Create the FastAPI app
 app = FastAPI()
 

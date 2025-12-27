@@ -2,8 +2,8 @@
 Minimal backend test to isolate the issue.
 """
 
-from fastapi import FastAPI
 import uvicorn
+from fastapi import FastAPI
 
 app = FastAPI()
 

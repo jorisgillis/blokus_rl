@@ -59,11 +59,11 @@ class BlokusEnv(gym.Env):
         pieces.append([(0, 0), (0, 1), (1, 0), (1, 1)])
         # Pentominoes
         # F Pentomino
-        pieces.append([(0, 0), (0, 1), (1, 1), (1, 2), (2, 1)])
+        pieces.append([(0, 1), (1, 0), (1, 1), (1, 2), (2, 2)])
         # L Pentomino
         pieces.append([(0, 0), (1, 0), (2, 0), (3, 0), (3, 1)])
         # N Pentomino
-        pieces.append([(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)])
+        pieces.append([(0, 1), (1, 0), (1, 1), (2, 0), (3, 0)])
         # P Pentomino
         pieces.append([(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)])
         # Y Pentomino
@@ -71,13 +71,13 @@ class BlokusEnv(gym.Env):
         # T Pentomino
         pieces.append([(0, 0), (0, 1), (0, 2), (1, 1), (2, 1)])
         # U Pentomino
-        pieces.append([(0, 0), (0, 1), (1, 0), (1, 1), (2, 0), (2, 1), (2, 2)])
+        pieces.append([(0, 0), (0, 2), (1, 0), (1, 1), (1, 2)])
         # V Pentomino
-        pieces.append([(0, 0), (1, 0), (2, 0), (2, 1), (3, 1)])
+        pieces.append([(0, 0), (0, 1), (0, 2), (1, 0), (2, 0)])
         # W Pentomino
-        pieces.append([(0, 0), (1, 0), (1, 1), (2, 1), (2, 2)])
-        # Z Pentomino
         pieces.append([(0, 0), (0, 1), (1, 1), (1, 2), (2, 2)])
+        # Z Pentomino
+        pieces.append([(0, 2), (1, 0), (1, 1), (1, 2), (2, 0)])
         # I Pentomino
         pieces.append([(0, 0), (1, 0), (2, 0), (3, 0), (4, 0)])
         # X Pentomino
@@ -85,14 +85,24 @@ class BlokusEnv(gym.Env):
         return pieces
 
     def _get_piece_coordinates(
-        self, piece_index: int, x: int, y: int, rotation: int
+        self, piece_index: int, x: int, y: int, rotation: int, 
+        flip_horizontal: bool = False, flip_vertical: bool = False
     ) -> list[tuple[int, int]]:
-        """Get the absolute coordinates of a piece given its position and rotation."""
+        """Get the absolute coordinates of a piece given its position, rotation, and flips."""
         piece = self.pieces[piece_index]
+
+        # Start with base coordinates
+        coords = [(px, py) for px, py in piece]
+
+        # Apply flips first (before rotation, matching frontend)
+        if flip_horizontal:
+            coords = [(-px, py) for px, py in coords]
+        if flip_vertical:
+            coords = [(px, -py) for px, py in coords]
 
         # Apply rotation (0: 0°, 1: 90°, 2: 180°, 3: 270°)
         rotated_piece = []
-        for px, py in piece:
+        for px, py in coords:
             if rotation == 0:  # 0°
                 rotated_piece.append((px, py))
             elif rotation == 1:  # 90°
@@ -110,11 +120,12 @@ class BlokusEnv(gym.Env):
         return absolute_coords
 
     def _is_valid_placement(
-        self, piece_index: int, x: int, y: int, rotation: int
+        self, piece_index: int, x: int, y: int, rotation: int,
+        flip_horizontal: bool = False, flip_vertical: bool = False
     ) -> bool:
-        """Check if a piece can be placed at the given position and rotation."""
+        """Check if a piece can be placed at the given position, rotation, and flips."""
         # Get the absolute coordinates of the piece
-        coords = self._get_piece_coordinates(piece_index, x, y, rotation)
+        coords = self._get_piece_coordinates(piece_index, x, y, rotation, flip_horizontal, flip_vertical)
 
         # Check if the piece is within the board boundaries
         for x, y in coords:
@@ -174,9 +185,10 @@ class BlokusEnv(gym.Env):
 
         return True
 
-    def _place_piece(self, piece_index: int, x: int, y: int, rotation: int) -> None:
+    def _place_piece(self, piece_index: int, x: int, y: int, rotation: int,
+                     flip_horizontal: bool = False, flip_vertical: bool = False) -> None:
         """Place a piece on the board."""
-        coords = self._get_piece_coordinates(piece_index, x, y, rotation)
+        coords = self._get_piece_coordinates(piece_index, x, y, rotation, flip_horizontal, flip_vertical)
 
         for x, y in coords:
             self.board[x, y, self.current_player] = 1
@@ -328,14 +340,15 @@ class BlokusEnv(gym.Env):
         return list(candidate_positions)
 
     def step(
-        self, action: tuple[int, int, int, int]
+        self, action: tuple[int, int, int, int] | tuple[int, int, int, int, bool, bool]
     ) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Execute one step in the environment.
 
         Args:
-            action: A tuple of (piece_index, position_x, position_y, rotation)
+            action: A tuple of (piece_index, position_x, position_y, rotation) or
+                (piece_index, position_x, position_y, rotation, flip_horizontal, flip_vertical)
                 where piece_index is 0-20, position is (0-19, 0-19),
-                and rotation is 0-3 (0°, 90°, 180°, 270°)
+                rotation is 0-3 (0°, 90°, 180°, 270°), and flips are boolean
 
         Returns:
             observation: The new board state
@@ -347,8 +360,12 @@ class BlokusEnv(gym.Env):
         if self.game_over:
             return self.board, 0.0, True, False, {"message": "Game already over"}
 
-        # Parse the action (piece_index, x, y, rotation)
-        piece_index, x, y, rotation = action
+        # Parse the action with optional flip parameters
+        if len(action) == 6:
+            piece_index, x, y, rotation, flip_h, flip_v = action
+        else:
+            piece_index, x, y, rotation = action
+            flip_h, flip_v = False, False
 
         # Validate the action
         if piece_index < 0 or piece_index >= 21:
@@ -364,11 +381,11 @@ class BlokusEnv(gym.Env):
             return self.board, -10.0, False, False, {"message": "Piece not available"}
 
         # Check if the placement is valid
-        if not self._is_valid_placement(piece_index, x, y, rotation):
+        if not self._is_valid_placement(piece_index, x, y, rotation, flip_h, flip_v):
             return self.board, -5.0, False, False, {"message": "Invalid placement"}
 
         # Place the piece
-        self._place_piece(piece_index, x, y, rotation)
+        self._place_piece(piece_index, x, y, rotation, flip_h, flip_v)
 
         # Calculate reward
         reward = self._calculate_reward(piece_index)

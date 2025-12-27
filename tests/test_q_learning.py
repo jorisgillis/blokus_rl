@@ -1,12 +1,11 @@
 """Tests for the Q-Learning implementation."""
 
 import sys
-import numpy as np
 
 sys.path.insert(0, ".")
 
-from blokus_env.q_learning import QLearningAgent
 from blokus_env.blokus_env import BlokusEnv
+from blokus_env.q_learning import QLearningAgent
 
 
 def test_q_learning_initialization():
@@ -35,10 +34,8 @@ def test_state_hashing():
     state, _ = env.reset()
     state_hash = agent.get_state_hash(state, 0)
 
-    assert isinstance(state_hash, tuple)
-    assert len(state_hash) == 2  # (board_flattened, player)
-    assert isinstance(state_hash[0], tuple)
-    assert isinstance(state_hash[1], int)
+    assert isinstance(state_hash, str)
+    assert len(state_hash) > 0
 
     print("State hashing test passed!")
 
@@ -58,7 +55,7 @@ def test_legal_actions():
     if legal_actions:
         action = legal_actions[0]
         assert isinstance(action, tuple)
-        assert len(action) == 4
+        assert len(action) == 6
         assert all(isinstance(x, int) for x in action)
 
     print("Legal actions test passed!")
@@ -92,7 +89,7 @@ def test_q_table_update():
 
     # Create a simple state and action
     state, _ = env.reset()
-    action = (0, 0, 0, 0)  # Simple action
+    action = (0, 0, 0, 0, False, False)  # Simple 6-tuple action
 
     # Initialize Q-table entry for the state
     state_hash = agent.get_state_hash(state, 0)
@@ -100,7 +97,7 @@ def test_q_table_update():
         agent.q_table[state_hash] = {}
 
     # Initial Q-value should be 0
-    initial_q = agent.q_table[state_hash].get(action, 0)
+    initial_q = agent.q_table.get(state_hash, {}).get(action, 0)
     assert initial_q == 0
 
     # Update Q-table

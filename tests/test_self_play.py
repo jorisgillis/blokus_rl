@@ -1,15 +1,16 @@
 """Tests for the self-play implementation."""
 
 import sys
+
 import numpy as np
 import pytest
 import torch
 
 sys.path.insert(0, ".")
 
-from blokus_env.self_play import SelfPlay, BlokusDataset
-from blokus_env.neural_network import BlokusModel
 from blokus_env.blokus_env import BlokusEnv
+from blokus_env.neural_network import BlokusModel
+from blokus_env.self_play import BlokusDataset, SelfPlay
 
 
 def test_blokus_dataset():

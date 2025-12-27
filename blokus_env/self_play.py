@@ -2,16 +2,19 @@
 Self-play implementation for Blokus reinforcement learning.
 """
 
-import numpy as np
 import random
+
+import numpy as np
+
 from blokus_env.blokus_env import BlokusEnv
 from blokus_env.mcts import MCTS
 
 # Try to import the real neural network, fall back to mock if not available
 try:
-    from blokus_env.neural_network import BlokusModel
     import torch
-    from torch.utils.data import Dataset, DataLoader
+    from torch.utils.data import DataLoader, Dataset
+
+    from blokus_env.neural_network import BlokusModel
 
     USE_REAL_NN = True
 except ImportError:
@@ -47,7 +50,6 @@ except ImportError:
 
     USE_REAL_NN = False
 
-import time
 
 
 class BlokusDataset(Dataset):

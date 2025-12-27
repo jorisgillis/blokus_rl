@@ -2,11 +2,11 @@
 Optimized Blokus Environment with performance improvements.
 """
 
+import hashlib
+
 import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
-import hashlib
-from collections import defaultdict
 
 
 class BlokusEnvOptimized(gym.Env):

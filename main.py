@@ -1,7 +1,6 @@
 from argparse import Namespace
 
 from blokus_env.q_learning import QLearningAgent
-from blokus_env.q_learning_optimized import QLearningAgentOptimized
 
 
 def main():
@@ -22,28 +21,14 @@ def q_learning(args: Namespace) -> None:
 
     print("Using Q-Learning method")
 
-    # Choose agent type based on optimization flag
-    if args.optimized:
-        print("Using optimized Q-learning agent")
-        AgentClass = QLearningAgentOptimized
-    else:
-        print("Using standard Q-learning agent")
-        AgentClass = QLearningAgent
-
     # Initialize Q-Learning agent
     if args.load and os.path.exists(args.load):
         print(f"Loading Q-learning agent from {args.load}")
-        agent = AgentClass()
+        agent = QLearningAgent()
         agent.load(args.load)
     else:
         print("Initializing new Q-learning agent")
-        agent = AgentClass(
-            learning_rate=0.1,
-            discount_factor=0.9,
-            exploration_rate=1.0,
-            exploration_decay=0.995,
-            min_exploration=0.01,
-        )
+        agent = QLearningAgent()
 
     # Train the agent
     print(f"Training Q-learning agent for {args.episodes} episodes...")
@@ -146,6 +131,7 @@ def parse_arguments():
     parser.add_argument(
         "--optimized",
         action="store_true",
+        default=True,
         help="Use optimized Q-learning agent (faster but uses more memory)",
     )
 

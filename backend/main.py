@@ -1,15 +1,30 @@
 """
-FastAPI backend for Blokus game.
+Backend for playing a game of Blokus!
 """
 
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+import logging
+import os
+import sys
+import uuid
+
+import numpy as np
 import uvicorn
-from typing import Optional
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Create FastAPI app
+# Add the root directory to Python path to import blokus_env
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+from blokus_env import BlokusEnv
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 app = FastAPI(
     title="Blokus Game API",
     description="Backend API for the Blokus board game",
@@ -22,111 +37,320 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for development
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+###############################################################################
+# FRONTEND
+###############################################################################
+# Mount static files on /static path
+frontend_path = "backend/static"
+app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+logger.info(f"Mounted static files from: {frontend_path}")
 
+
+@app.get("/")
+async def serve_frontend():
+    return FileResponse(os.path.join("backend/html", "index.html"))
+
+
+# # Catch-all route for frontend routing (for single-page applications)
+# # This will serve index.html for any non-API routes
+# @app.get("/{full_path:path}")
+# async def serve_frontend_routes(full_path: str, request: Request):
+#     # Serve index.html for all non-API routes (for frontend routing)
+#     return FileResponse(os.path.join("backend/html", "index.html"))
+
+
+###############################################################################
+# BACKEND ROUTER
+###############################################################################
 # Data models
-class HelloResponse(BaseModel):
-    message: str
-    status: str
-    version: str
-
-
 class GameState(BaseModel):
-    board: list
+    board: list[list[list[int]]]  # 20x20x4 board
     current_player: int
+    players: list[dict[str, str]]  # Player info
+    remaining_pieces: list[list[bool]]  # Available pieces per player
+    scores: list[int]  # Current scores
     game_over: bool
-    winner: Optional[int]
+    winner: int | None
+    message: str | None
+
+
+class PlayerMove(BaseModel):
+    player_id: int
+    piece_id: int
+    rotation: int
+    x: int
+    y: int
+    flip_horizontal: bool = False
+    flip_vertical: bool = False
+
+
+class GameCreateResponse(BaseModel):
+    game_id: str
+    message: str
+
+
+class ErrorResponse(BaseModel):
+    error: str
+    details: str | None
+
+
+# Game manager
+class GameManager:
+    def __init__(self):
+        self.games = {}  # game_id -> game_data
+        self.player_colors = ["blue", "yellow", "red", "green"]
+        self.player_names = [
+            "Blue Player",
+            "Yellow Player",
+            "Red Player",
+            "Green Player",
+        ]
+
+    def create_game(self) -> str:
+        """Create a new game and return the game ID."""
+        game_id = str(uuid.uuid4())
+
+        # Initialize game environment
+        env = BlokusEnv()
+        state, _ = env.reset()
+
+        # Store game data
+        self.games[game_id] = {
+            "env": env,
+            "state": state,
+            "players": [
+                {"id": "0", "name": self.player_names[0], "color": self.player_colors[0]},
+                {"id": "1", "name": self.player_names[1], "color": self.player_colors[1]},
+                {"id": "2", "name": self.player_names[2], "color": self.player_colors[2]},
+                {"id": "3", "name": self.player_names[3], "color": self.player_colors[3]},
+            ],
+            "remaining_pieces": env.available_pieces,
+            "scores": [0, 0, 0, 0],
+            "game_over": False,
+            "winner": None,
+            "current_player": 0,
+        }
+
+        return game_id
+
+    def get_game_state(self, game_id: str) -> dict:
+        """Get the current state of a game."""
+        if game_id not in self.games:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        game_data = self.games[game_id]
+        env = game_data["env"]
+
+        # Calculate scores (number of squares placed on the board)
+        scores = []
+        for player_id in range(4):
+            # Count all squares placed by this player on the board
+            placed_squares = int(np.sum(env.board[:, :, player_id]))
+            scores.append(placed_squares)
+
+        # Update game data
+        game_data["scores"] = scores
+        game_data["remaining_pieces"] = env.available_pieces
+        game_data["current_player"] = env.current_player
+        game_data["game_over"] = env.game_over
+        game_data["winner"] = env.winner
+
+        return {
+            "board": env.board.tolist(),
+            "current_player": env.current_player,
+            "players": game_data["players"],
+            "remaining_pieces": env.available_pieces,
+            "scores": scores,
+            "game_over": env.game_over,
+            "winner": env.winner,
+            "message": f"Player {env.current_player + 1}'s turn"
+            if not env.game_over
+            else "Game Over!",
+        }
+
+    def make_move(self, game_id: str, move: PlayerMove) -> dict:
+        """Make a move in the game."""
+        if game_id not in self.games:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        game_data = self.games[game_id]
+        env = game_data["env"]
+
+        # Check if it's the player's turn
+        if move.player_id != env.current_player:
+            raise HTTPException(
+                status_code=400, detail=f"Not player {move.player_id}'s turn"
+            )
+
+        # Check if the piece is available
+        if not env.available_pieces[move.player_id][move.piece_id]:
+            raise HTTPException(status_code=400, detail="Piece not available")
+
+        # Check if the move is valid
+        if not env._is_valid_placement(move.piece_id, move.x, move.y, move.rotation, 
+                                       move.flip_horizontal, move.flip_vertical):
+            raise HTTPException(status_code=400, detail="Invalid move")
+
+        # Make the move
+        try:
+            next_state, reward, done, _, _ = env.step(
+                (move.piece_id, move.x, move.y, move.rotation, 
+                 move.flip_horizontal, move.flip_vertical)
+            )
+            game_data["state"] = next_state
+
+            # Update game state
+            if done:
+                game_data["game_over"] = True
+                game_data["winner"] = env.winner
+
+            return self.get_game_state(game_id)
+
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Move failed: {str(e)}") from e
+
+    def get_piece_shapes(self) -> list[list[tuple[int, int]]]:
+        """Get the shapes of all pieces."""
+        env = BlokusEnv()
+        return env.pieces
+
+
+# Game manager instance
+game_manager = GameManager()
 
 
 # API endpoints
-@app.get("/", response_model=HelloResponse)
-async def root():
-    """
-    Root endpoint - Hello World
-    """
-    return {"message": "Hello, Blokus World!", "status": "success", "version": "1.0.0"}
-
-
-@app.get("/api/hello", response_model=HelloResponse)
-async def hello_world():
-    """
-    Hello World endpoint
-    """
+@app.get("/api", tags=["general"])
+async def api_root():
+    """API root endpoint."""
     return {
-        "message": "Hello from Blokus API!",
-        "status": "success",
+        "message": "Welcome to Blokus Game API!",
         "version": "1.0.0",
+        "endpoints": {
+            "/games": "Create and manage games",
+            "/games/{game_id}": "Get game state",
+            "/games/{game_id}/move": "Make a move",
+            "/pieces": "Get piece shapes",
+        },
     }
 
 
-@app.get("/api/hello/{name}", response_model=HelloResponse)
-async def hello_name(name: str):
-    """
-    Personalized hello endpoint
-    """
+@app.post("/games", response_model=GameCreateResponse, tags=["games"])
+async def create_game():
+    """Create a new game."""
+    game_id = game_manager.create_game()
     return {
-        "message": f"Hello, {name}! Welcome to Blokus!",
-        "status": "success",
-        "version": "1.0.0",
+        "game_id": game_id,
+        "message": f"Game created successfully. Use this ID: {game_id}",
     }
 
 
-@app.get("/api/status")
-async def status():
-    """
-    API status endpoint
-    """
+@app.get("/games/{game_id}", response_model=GameState, tags=["games"])
+async def get_game_state(game_id: str):
+    """Get the current state of a game."""
+    return game_manager.get_game_state(game_id)
+
+
+@app.post("/games/{game_id}/move", response_model=GameState, tags=["games"])
+async def make_move(game_id: str, move: PlayerMove):
+    """Make a move in the game."""
+    return game_manager.make_move(game_id, move)
+
+
+@app.get("/pieces", tags=["pieces"])
+async def get_piece_shapes():
+    """Get the shapes of all pieces."""
+    pieces = game_manager.get_piece_shapes()
+
+    # Convert to a more JSON-friendly format
+    piece_shapes = []
+    for piece in pieces:
+        piece_shapes.append([{"x": x, "y": y} for x, y in piece])
+
     return {
-        "status": "running",
-        "message": "Blokus API is up and running!",
-        "endpoints": [
-            {"path": "/", "description": "Root endpoint"},
-            {"path": "/api/hello", "description": "Hello World"},
-            {"path": "/api/hello/{name}", "description": "Personalized hello"},
-            {"path": "/api/status", "description": "API status"},
-            {"path": "/api/docs", "description": "Swagger docs"},
-            {"path": "/api/redoc", "description": "ReDoc docs"},
-        ],
+        "pieces": piece_shapes,
+        "count": len(piece_shapes),
+        "description": "All 21 Blokus piece shapes in relative coordinates",
     }
 
 
-# Game-related endpoints (will be implemented later)
-@app.get("/api/game/new")
-async def new_game():
-    """
-    Create a new game
-    """
-    # This will be implemented when we integrate the game logic
-    return {
-        "message": "New game endpoint (to be implemented)",
-        "status": "not_implemented",
-    }
+# WebSocket for real-time updates
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections = []
+        self.game_connections = {}  # game_id -> list of connections
+
+    async def connect(self, websocket: WebSocket, game_id: str | None = None):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+        if game_id:
+            if game_id not in self.game_connections:
+                self.game_connections[game_id] = []
+            self.game_connections[game_id].append(websocket)
+
+    def disconnect(self, websocket: WebSocket, game_id: str | None = None):
+        self.active_connections.remove(websocket)
+
+        if game_id and game_id in self.game_connections:
+            if websocket in self.game_connections[game_id]:
+                self.game_connections[game_id].remove(websocket)
+            if not self.game_connections[game_id]:
+                del self.game_connections[game_id]
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast_to_game(self, message: str, game_id: str):
+        if game_id in self.game_connections:
+            for connection in self.game_connections[game_id]:
+                try:
+                    await connection.send_text(message)
+                except WebSocketDisconnect:
+                    self.disconnect(connection, game_id)
 
 
-@app.get("/api/game/state")
-async def get_game_state():
-    """
-    Get current game state
-    """
-    # This will be implemented when we integrate the game logic
-    return {
-        "message": "Game state endpoint (to be implemented)",
-        "status": "not_implemented",
-    }
+websocket_manager = ConnectionManager()
+
+
+@app.websocket("/ws/{game_id}")
+async def websocket_endpoint(websocket: WebSocket, game_id: str):
+    """WebSocket endpoint for real-time game updates."""
+    await websocket_manager.connect(websocket, game_id)
+
+    try:
+        while True:
+            # Just keep the connection open
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        websocket_manager.disconnect(websocket, game_id)
+
+
+# Helper function to broadcast game updates
+async def broadcast_game_update(game_id: str, message: str):
+    """Broadcast a game update to all connected clients."""
+    await websocket_manager.broadcast_to_game(message, game_id)
 
 
 if __name__ == "__main__":
-    # Run the FastAPI server
-    uvicorn.run(
-        "backend.main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,  # Auto-reload for development
-        log_level="info",
-        access_log=True,
-    )
+    logger.info("Starting Blokus backend...")
+
+    # Try running with different configuration
+    try:
+        uvicorn.run(
+            "main:app",  # Use just the filename
+            host="0.0.0.0",
+            port=8000,
+            log_level="info",
+            access_log=True,
+            reload=True,
+        )
+    except Exception as e:
+        logger.error(f"Failed to start backend: {e}")
+        raise

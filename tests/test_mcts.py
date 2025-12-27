@@ -1,13 +1,13 @@
 """Tests for the MCTS implementation."""
 
 import sys
-import numpy as np
+
 import pytest
 
 sys.path.insert(0, ".")
 
-from blokus_env.mcts import MCTS, MCTSNode
 from blokus_env.blokus_env import BlokusEnv
+from blokus_env.mcts import MCTS, MCTSNode
 from blokus_env.neural_network import BlokusModel
 
 

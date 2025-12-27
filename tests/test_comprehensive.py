@@ -1,14 +1,15 @@
 """Comprehensive test of the entire RL pipeline."""
 
 import sys
+
 import numpy as np
 
 sys.path.insert(0, ".")
 
 from blokus_env.blokus_env import BlokusEnv
 from blokus_env.mcts import MCTS
-from blokus_env.self_play import SelfPlay
 from blokus_env.neural_network_mock import MockBlokusModel
+from blokus_env.self_play import SelfPlay
 
 
 def test_comprehensive_pipeline():

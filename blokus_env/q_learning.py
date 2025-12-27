@@ -1,22 +1,25 @@
-"""Q-Learning implementation for Blokus."""
+"""Q-Learning implementation for Blokus with performance improvements."""
 
+import hashlib
 import pickle
 import random
-from typing import Dict, List, Tuple, Any
+from typing import Any
+
 import numpy as np
+from tqdm import tqdm
 
 from blokus_env.blokus_env import BlokusEnv
 
 
 class QLearningAgent:
-    """Q-Learning agent for Blokus game."""
+    """Q-Learning agent for Blokus game with performance improvements."""
 
     def __init__(
         self,
         learning_rate: float = 0.1,
         discount_factor: float = 0.9,
         exploration_rate: float = 1.0,
-        exploration_decay: float = 0.995,
+        exploration_decay: float = 0.9995,
         min_exploration: float = 0.01,
     ):
         """Initialize Q-Learning agent.
@@ -41,10 +44,165 @@ class QLearningAgent:
         self.ties = 0
 
         # Q-table: state_hash -> action -> q_value
-        self.q_table: Dict[Tuple, Dict[Tuple[int, int, int, int], float]] = {}
+        self.q_table: dict[str, dict[tuple[int, int, int, int, bool, bool], float]] = {}
 
-    def get_state_hash(self, state: np.ndarray, player: int) -> Tuple:
-        """Convert game state to hashable representation.
+        # Performance optimization: caching and precomputation
+        self._state_cache: dict[str, str] = {}  # state_tuple -> state_hash
+        self._legal_actions_cache: dict[str, list[tuple[int, int, int, int, bool, bool]]] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
+
+        # Statistics
+        self._total_state_hashes = 0
+        self._total_legal_action_calls = 0
+
+    def _get_state_hash_fast(self, state: np.ndarray, player: int) -> str:
+        """Fast state hashing using MD5 hash of board state.
+
+        Args:
+            state: Current game state (20x20x4 board)
+            player: Current player (0 or 1)
+
+        Returns:
+            Hash string for the state
+        """
+        self._total_state_hashes += 1
+
+        # Create a unique key for caching
+        cache_key = (state.data.tobytes(), player)
+
+        # Check cache first
+        if cache_key in self._state_cache:
+            self._cache_hits += 1
+            return self._state_cache[cache_key]
+
+        self._cache_misses += 1
+
+        # Create MD5 hash of the board state
+        state_bytes = state.tobytes()
+        state_hash = hashlib.md5(state_bytes).hexdigest()
+
+        # Include player in the hash
+        full_hash = f"{state_hash}_{player}"
+
+        # Cache the result
+        self._state_cache[cache_key] = full_hash
+
+        return full_hash
+
+    def _get_candidate_positions_optimized(
+        self, env: BlokusEnv, player: int
+    ) -> set[tuple[int, int]]:
+        """Optimized candidate position generation with reduced search space.
+
+        Args:
+            env: Blokus environment
+            player: Current player
+
+        Returns:
+            Set of candidate positions to check for piece placement
+        """
+        candidate_positions = set()
+
+        if not env.first_piece_placed[player]:
+            # First piece: check positions around the player's starting corner
+            player_corner = {
+                0: (0, 0),  # Blue: top-left
+                1: (0, 19),  # Yellow: top-right
+                2: (19, 19),  # Red: bottom-right
+                3: (19, 0),  # Green: bottom-left
+            }[player]
+
+            # Add the corner itself and surrounding positions
+            # Need at least 5 squares radius to handle the longest piece (5-square line)
+            x, y = player_corner
+            for dx in range(-5, 6):  # Check 11x11 area around corner
+                for dy in range(-5, 6):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < 20 and 0 <= ny < 20:
+                        candidate_positions.add((nx, ny))
+        else:
+            # Subsequent pieces: check expanded area around existing pieces
+            # Find all existing pieces of this player
+            player_pieces = []
+            for x in range(20):
+                for y in range(20):
+                    if env.board[x, y, player] == 1:
+                        player_pieces.append((x, y))
+
+            if player_pieces:
+                # Find the bounding box of existing pieces
+                min_x = min(x for x, y in player_pieces)
+                max_x = max(x for x, y in player_pieces)
+                min_y = min(y for x, y in player_pieces)
+                max_y = max(y for x, y in player_pieces)
+
+                # Reduce the expansion radius for optimization
+                expand_radius = 5  # Reduced from 8
+
+                start_x = max(0, min_x - expand_radius)
+                end_x = min(19, max_x + expand_radius)
+                start_y = max(0, min_y - expand_radius)
+                end_y = min(19, max_y + expand_radius)
+
+                # Add all positions in the expanded bounding box
+                for x in range(start_x, end_x + 1):
+                    for y in range(start_y, end_y + 1):
+                        candidate_positions.add((x, y))
+
+        return candidate_positions
+
+    def get_legal_actions_optimized(
+        self, env: BlokusEnv, player: int
+    ) -> list[tuple[int, int, int, int, bool, bool]]:
+        """Optimized version of get_legal_actions with caching and reduced search space.
+
+        Args:
+            env: Blokus environment
+            player: Current player
+
+        Returns:
+            List of legal actions as (piece_id, rotation, x, y, flip_h, flip_v) tuples
+        """
+        self._total_legal_action_calls += 1
+
+        # Create cache key
+        cache_key = (env.board.data.tobytes(), player)
+
+        # Check cache first
+        if cache_key in self._legal_actions_cache:
+            self._cache_hits += 1
+            return self._legal_actions_cache[cache_key].copy()
+
+        self._cache_misses += 1
+
+        legal_actions = []
+
+        # Get available pieces for the player (optimized)
+        available_pieces = [
+            i for i, available in enumerate(env.available_pieces[player]) if available
+        ]
+
+        # Get candidate positions (optimized)
+        candidate_positions = self._get_candidate_positions_optimized(env, player)
+
+        # For each piece, check candidate positions, rotations, and flips
+        for piece_id in available_pieces:
+            for rotation in range(4):  # 0, 1, 2, 3 rotations
+                for flip_h in [False, True]:  # Horizontal flip
+                    for flip_v in [False, True]:  # Vertical flip
+                        for x, y in candidate_positions:
+                            # Check if placement is valid (use the environment's method)
+                            if env._is_valid_placement(piece_id, x, y, rotation, flip_h, flip_v):
+                                legal_actions.append((piece_id, x, y, rotation, flip_h, flip_v))
+
+        # Cache the result
+        self._legal_actions_cache[cache_key] = legal_actions.copy()
+
+        return legal_actions
+
+    def get_state_hash(self, state: np.ndarray, player: int) -> str:
+        """Convert game state to hashable representation (wrapper for fast version).
 
         Args:
             state: Current game state (20x20x4 board)
@@ -53,39 +211,25 @@ class QLearningAgent:
         Returns:
             Hashable state representation
         """
-        # Flatten the 3D board (20x20x4) and convert to tuple for hashing
-        board_flattened = tuple(state.flatten())
-        return (board_flattened, player)
+        return self._get_state_hash_fast(state, player)
 
-    def get_legal_actions(self, env: BlokusEnv, player: int) -> List[Tuple[int, int, int, int]]:
-        """Get all legal actions for current state.
+    def get_legal_actions(
+        self, env: BlokusEnv, player: int
+    ) -> list[tuple[int, int, int, int, bool, bool]]:
+        """Get all legal actions for current state (wrapper for optimized version).
 
         Args:
             env: Blokus environment
             player: Current player
 
         Returns:
-            List of legal actions as (piece_id, rotation, x, y) tuples
+            List of legal actions as (piece_id, x, y, rotation, flip_h, flip_v) tuples
         """
-        legal_actions = []
-        
-        # Get available pieces for the player
-        available_pieces = [i for i, available in enumerate(env.available_pieces[player]) if available]
-        
-        # For each piece, check all possible placements
-        for piece_id in available_pieces:
-            for rotation in range(4):  # 0, 1, 2, 3 rotations
-                for x in range(20):
-                    for y in range(20):
-                        # Check if placement is valid
-                        if env._is_valid_placement(piece_id, x, y, rotation):
-                            legal_actions.append((piece_id, rotation, x, y))
-        
-        return legal_actions
+        return self.get_legal_actions_optimized(env, player)
 
     def choose_action(
         self, env: BlokusEnv, state: np.ndarray, player: int, training: bool = True
-    ) -> Tuple[int, int, int, int]:
+    ) -> tuple[int, int, int, int, bool, bool]:
         """Choose action using epsilon-greedy policy.
 
         Args:
@@ -95,10 +239,10 @@ class QLearningAgent:
             training: Whether in training mode (affects exploration)
 
         Returns:
-            Selected action as (piece_id, rotation, x, y) tuple
+            Selected action as (piece_id, x, y, rotation, flip_h, flip_v) tuple
         """
         legal_actions = self.get_legal_actions(env, player)
-        
+
         if not legal_actions:
             return None
 
@@ -114,7 +258,7 @@ class QLearningAgent:
             q_values = {}
             for action in legal_actions:
                 q_values[action] = self.q_table[state_hash].get(action, 0.0)
-            
+
             # Choose action with highest Q-value
             if q_values:
                 best_action = max(q_values.items(), key=lambda x: x[1])[0]
@@ -126,7 +270,7 @@ class QLearningAgent:
     def update_q_table(
         self,
         state: np.ndarray,
-        action: Tuple[int, int, int, int],
+        action: tuple[int, int, int, int, bool, bool],
         reward: float,
         next_state: np.ndarray,
         next_player: int,
@@ -179,17 +323,19 @@ class QLearningAgent:
         """
         env = BlokusEnv()
 
-        for episode in range(episodes):
+        # Use tqdm for progress tracking
+        pbar = tqdm(range(episodes), desc="Training", unit="episode")
+        for episode in pbar:
             state, _ = env.reset()
             done = False
             step = 0
 
             while not done and step < max_steps:
                 current_player = env.current_player
-                
+
                 # Choose action
                 action = self.choose_action(env, state, current_player, training=True)
-                
+
                 if action is None:
                     # No legal moves, end episode
                     break
@@ -198,7 +344,9 @@ class QLearningAgent:
                 next_state, reward, done, _, _ = env.step(action)
 
                 # Update Q-table
-                self.update_q_table(state, action, reward, next_state, current_player, done)
+                self.update_q_table(
+                    state, action, reward, next_state, current_player, done
+                )
 
                 # Update state and statistics
                 state = next_state
@@ -215,9 +363,17 @@ class QLearningAgent:
 
             # Decay exploration rate
             self.exploration_rate = max(
-                self.min_exploration, 
-                self.exploration_rate * self.exploration_decay
+                self.min_exploration, self.exploration_rate * self.exploration_decay
             )
+
+            # Update progress bar with current stats
+            cache_stats = self.get_cache_stats()
+            pbar.set_postfix({
+                "W/L/T": f"{self.wins}/{self.losses}/{self.ties}",
+                "Exploration": f"{self.exploration_rate:.6f}",
+                "CacheHit": f"{cache_stats['hit_rate']:.1%}"
+            })
+
 
     def play_game(self, render: bool = False) -> None:
         """Play a demonstration game using the trained agent.
@@ -263,6 +419,10 @@ class QLearningAgent:
             "losses": self.losses,
             "ties": self.ties,
             "q_table": self.q_table,
+            "_cache_hits": self._cache_hits,
+            "_cache_misses": self._cache_misses,
+            "_total_state_hashes": self._total_state_hashes,
+            "_total_legal_action_calls": self._total_legal_action_calls,
         }
 
         with open(filename, "wb") as f:
@@ -291,13 +451,17 @@ class QLearningAgent:
             self.losses = data["losses"]
             self.ties = data["ties"]
             self.q_table = data["q_table"]
+            self._cache_hits = data.get("_cache_hits", 0)
+            self._cache_misses = data.get("_cache_misses", 0)
+            self._total_state_hashes = data.get("_total_state_hashes", 0)
+            self._total_legal_action_calls = data.get("_total_legal_action_calls", 0)
 
             return True
 
         except (FileNotFoundError, pickle.PickleError, KeyError):
             return False
 
-    def get_q_table_size(self) -> Tuple[int, int]:
+    def get_q_table_size(self) -> tuple[int, int]:
         """Get size of Q-table.
 
         Returns:
@@ -306,3 +470,28 @@ class QLearningAgent:
         state_count = len(self.q_table)
         action_count = sum(len(actions) for actions in self.q_table.values())
         return state_count, action_count
+
+    def get_cache_stats(self) -> dict[str, Any]:
+        """Get cache statistics.
+
+        Returns:
+            Dictionary with cache statistics
+        """
+        return {
+            "cache_hits": self._cache_hits,
+            "cache_misses": self._cache_misses,
+            "hit_rate": self._cache_hits / (self._cache_hits + self._cache_misses)
+            if (self._cache_hits + self._cache_misses) > 0
+            else 0.0,
+            "total_state_hashes": self._total_state_hashes,
+            "total_legal_action_calls": self._total_legal_action_calls,
+            "state_hash_cache_size": len(self._state_cache),
+            "legal_actions_cache_size": len(self._legal_actions_cache),
+        }
+
+    def clear_caches(self) -> None:
+        """Clear all caches to free memory."""
+        self._state_cache.clear()
+        self._legal_actions_cache.clear()
+        self._cache_hits = 0
+        self._cache_misses = 0

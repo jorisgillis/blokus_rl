@@ -1,12 +1,11 @@
 """Simple self-play test."""
 
 import sys
-import numpy as np
 
 sys.path.insert(0, ".")
 
-from blokus_env.self_play import SelfPlay
 from blokus_env.neural_network_mock import MockBlokusModel
+from blokus_env.self_play import SelfPlay
 
 
 def test_self_play_simple():

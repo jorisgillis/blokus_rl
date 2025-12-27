@@ -1,13 +1,12 @@
 """Test both Q-Learning and Deep RL methods."""
 
 import sys
-import numpy as np
 
 sys.path.insert(0, ".")
 
+from blokus_env.neural_network_mock import MockBlokusModel
 from blokus_env.q_learning import QLearningAgent
 from blokus_env.self_play import SelfPlay
-from blokus_env.neural_network_mock import MockBlokusModel
 
 
 def test_q_learning_method():
@@ -36,7 +35,7 @@ def test_q_learning_method():
     assert state_count > 0
     assert action_count > 0
 
-    print(f"✓ Q-Learning trained successfully")
+    print("✓ Q-Learning trained successfully")
     print(f"  Episodes: {agent.episodes}")
     print(f"  Wins: {agent.wins}, Losses: {agent.losses}, Ties: {agent.ties}")
     print(f"  Q-table: {state_count} states, {action_count} actions")
@@ -75,7 +74,7 @@ def test_deep_rl_method():
 
     assert trained_model is not None
 
-    print(f"✓ Deep RL trained successfully")
+    print("✓ Deep RL trained successfully")
     print(f"  Collected: {len(states)} states")
     print(f"  Policies: {len(policies)} policy vectors")
     print(f"  Values: {len(values)} value estimates")

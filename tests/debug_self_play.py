@@ -1,14 +1,13 @@
 """Debug self-play to find the issue."""
 
 import sys
-import numpy as np
 
 sys.path.insert(0, ".")
 
-from blokus_env.self_play import SelfPlay
-from blokus_env.neural_network_mock import MockBlokusModel
 from blokus_env.blokus_env import BlokusEnv
 from blokus_env.mcts import MCTS
+from blokus_env.neural_network_mock import MockBlokusModel
+from blokus_env.self_play import SelfPlay
 
 
 def debug_self_play():

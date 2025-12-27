@@ -2,20 +2,20 @@
 Monte Carlo Tree Search implementation for Blokus game.
 """
 
-import numpy as np
 import math
-import random
-from collections import defaultdict
+
+import numpy as np
+
 from blokus_env.blokus_env import BlokusEnv
 
 # Try to import the real neural network, fall back to mock if not available
 try:
-    from blokus_env.neural_network import BlokusModel
     import torch
+
+    from blokus_env.neural_network import BlokusModel
 
     USE_REAL_NN = True
 except ImportError:
-    from blokus_env.neural_network_mock import MockBlokusModel as BlokusModel
 
     USE_REAL_NN = False
 

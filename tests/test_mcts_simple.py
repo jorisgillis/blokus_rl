@@ -1,12 +1,11 @@
 """Simple MCTS test to debug issues."""
 
 import sys
-import numpy as np
 
 sys.path.insert(0, ".")
 
-from blokus_env.mcts import MCTS, MCTSNode
 from blokus_env.blokus_env import BlokusEnv
+from blokus_env.mcts import MCTS
 
 
 def test_simple_mcts():

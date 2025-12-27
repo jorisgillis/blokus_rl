@@ -5,6 +5,7 @@ This script establishes a performance baseline before optimizations.
 
 import sys
 import time
+
 import numpy as np
 
 # Add the current directory to Python path
@@ -182,7 +183,7 @@ class PerformanceBaseline:
         steps_per_minute = steps_per_second * 60
         avg_legal_actions = np.mean(legal_action_counts)
 
-        print(f"\n=== Performance Summary ===")
+        print("\n=== Performance Summary ===")
         print(f"Average step time: {avg_step_time:.3f}s")
         print(f"Min step time: {min_step_time:.3f}s")
         print(f"Max step time: {max_step_time:.3f}s")
@@ -231,7 +232,7 @@ class PerformanceBaseline:
             f"Estimated episodes/minute: {training_results['estimated_episodes_per_minute']:.2f}"
         )
 
-        print(f"\n=== Bottleneck Analysis ===")
+        print("\n=== Bottleneck Analysis ===")
         print(
             f"Legal actions take {component_results['legal_actions_empty']:.3f}s (empty) to {component_results['legal_actions_with_pieces']:.3f}s (with pieces)"
         )
@@ -258,5 +259,5 @@ if __name__ == "__main__":
     with open("performance_baseline_results.pkl", "wb") as f:
         pickle.dump(results, f)
 
-    print(f"\nBaseline results saved to 'performance_baseline_results.pkl'")
+    print("\nBaseline results saved to 'performance_baseline_results.pkl'")
     print("Use this to compare performance after optimizations.")

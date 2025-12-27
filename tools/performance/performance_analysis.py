@@ -3,11 +3,10 @@ Performance analysis for Q-Learning algorithm.
 This script identifies the main bottlenecks in the training process.
 """
 
-import sys
-import time
 import cProfile
 import pstats
-from collections import defaultdict
+import sys
+import time
 
 import numpy as np
 

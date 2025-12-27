@@ -4,7 +4,6 @@ Test script to compare performance between original and optimized Blokus environ
 
 import sys
 import time
-import numpy as np
 
 # Add the current directory to Python path
 sys.path.insert(0, ".")
@@ -294,7 +293,7 @@ class PerformanceComparison:
         # Get cache stats
         cache_stats = self.optimized_env.get_cache_stats()
 
-        print(f"\nCache Statistics:")
+        print("\nCache Statistics:")
         print(f"   Cache hits: {cache_stats['cache_hits']}")
         print(f"   Cache misses: {cache_stats['cache_misses']}")
         print(f"   Hit rate: {cache_stats['hit_rate']:.3f}")
@@ -325,7 +324,7 @@ class PerformanceComparison:
         print(f"Candidate positions: {candidate_results[2]:.2f}× speedup")
         print(f"Full training step: {training_results[2]:.2f}× speedup")
 
-        print(f"\n=== Cache Effectiveness ===")
+        print("\n=== Cache Effectiveness ===")
         print(f"Cache hit rate: {cache_stats['hit_rate']:.3f}")
         print(f"Placement cache size: {cache_stats['placement_cache_size']}")
         print(f"Legal actions cache size: {cache_stats['legal_actions_cache_size']}")
@@ -337,7 +336,7 @@ class PerformanceComparison:
             + training_results[2] * 0.1  # Other operations ~10%
         )
 
-        print(f"\n=== Overall Performance Improvement ===")
+        print("\n=== Overall Performance Improvement ===")
         print(f"Estimated overall speedup: {overall_speedup:.2f}×")
         print(
             f"This could increase training speed from ~8 to ~{8 * overall_speedup:.1f} episodes/minute"
@@ -363,4 +362,4 @@ if __name__ == "__main__":
     with open("optimization_comparison_results.pkl", "wb") as f:
         pickle.dump(results, f)
 
-    print(f"\nComparison results saved to 'optimization_comparison_results.pkl'")
+    print("\nComparison results saved to 'optimization_comparison_results.pkl'")

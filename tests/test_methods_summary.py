@@ -1,14 +1,13 @@
 """Summary test of both RL methods."""
 
 import sys
-import numpy as np
 
 sys.path.insert(0, ".")
 
+from blokus_env.blokus_env import BlokusEnv
+from blokus_env.neural_network_mock import MockBlokusModel
 from blokus_env.q_learning import QLearningAgent
 from blokus_env.self_play import SelfPlay
-from blokus_env.neural_network_mock import MockBlokusModel
-from blokus_env.blokus_env import BlokusEnv
 
 
 def test_methods_summary():
@@ -24,7 +23,7 @@ def test_methods_summary():
     state, _ = env.reset()
     legal_actions = agent.get_legal_actions(env, 0)
 
-    print(f"   ✓ Agent initialized")
+    print("   ✓ Agent initialized")
     print(f"   ✓ Found {len(legal_actions)} legal actions")
 
     # Test action selection

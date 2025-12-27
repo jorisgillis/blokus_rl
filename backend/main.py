@@ -9,6 +9,8 @@ import uuid
 
 import numpy as np
 import uvicorn
+import json
+import pickle
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -16,11 +18,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
 # Add the root directory to Python path to import blokus_env
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 
 from blokus_env import BlokusEnv
+from blokus_env.q_learning import QLearningAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -100,6 +102,39 @@ class ErrorResponse(BaseModel):
     details: str | None
 
 
+# Game Logger
+class GameLogger:
+    def __init__(self, log_file: str = "backend/games_log.txt"):
+        self.log_file = log_file
+
+    def log_move(self, game_id: str, move: PlayerMove):
+        """Log a move to the game log file."""
+        log_entry = {
+            "game_id": game_id,
+            "player_id": move.player_id,
+            "piece_id": move.piece_id,
+            "rotation": move.rotation,
+            "x": move.x,
+            "y": move.y,
+            "flip_h": move.flip_horizontal,
+            "flip_v": move.flip_vertical
+        }
+        with open(self.log_file, "a") as f:
+            f.write(json.dumps(log_entry) + "\n")
+
+
+# Global AI Agent
+AI_AGENT = QLearningAgent()
+if os.path.exists("q_agent.pkl"):
+    success = AI_AGENT.load("q_agent.pkl")
+    if success:
+        logger.info("Successfully loaded AI agent from q_agent.pkl")
+    else:
+        logger.warning("Failed to load AI agent from q_agent.pkl")
+else:
+    logger.warning("No q_agent.pkl found, AI moves will be random.")
+
+
 # Game manager
 class GameManager:
     def __init__(self):
@@ -111,6 +146,7 @@ class GameManager:
             "Red Player",
             "Green Player",
         ]
+        self.logger = GameLogger()
 
     def create_game(self) -> str:
         """Create a new game and return the game ID."""
@@ -205,6 +241,9 @@ class GameManager:
             )
             game_data["state"] = next_state
 
+            # Log the move
+            self.logger.log_move(game_id, move)
+
             # Update game state
             if done:
                 game_data["game_over"] = True
@@ -214,6 +253,71 @@ class GameManager:
 
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Move failed: {str(e)}") from e
+
+    def make_ai_move(self, game_id: str) -> dict:
+        """Let the AI make a move for the current player."""
+        if game_id not in self.games:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        game_data = self.games[game_id]
+        env = game_data["env"]
+
+        if env.game_over:
+            raise HTTPException(status_code=400, detail="Game already over")
+
+        # Choose action
+        action = AI_AGENT.choose_action(env, game_data["state"], env.current_player, training=False)
+        
+        # If no valid action, skip (though Blokus Envoy handles this in step, we should be explicit)
+        if action is None:
+             raise HTTPException(status_code=400, detail="AI found no legal moves")
+
+        piece_id, x, y, rotation, flip_h, flip_v = action
+        
+        move = PlayerMove(
+            player_id=env.current_player,
+            piece_id=piece_id,
+            rotation=rotation,
+            x=x,
+            y=y,
+            flip_horizontal=flip_h,
+            flip_vertical=flip_v
+        )
+
+        return self.make_move(game_id, move)
+
+    def skip_turn(self, game_id: str) -> dict:
+        """Skip the current player's turn if they have no moves."""
+        if game_id not in self.games:
+            raise HTTPException(status_code=404, detail="Game not found")
+
+        game_data = self.games[game_id]
+        env = game_data["env"]
+
+        if env.game_over:
+            raise HTTPException(status_code=400, detail="Game already over")
+
+        # Check if they really have no moves
+        if env.has_legal_moves(env.current_player):
+             raise HTTPException(status_code=400, detail="Player still has legal moves")
+
+        # Manual skip
+        env.current_player = (env.current_player + 1) % 4
+        
+        # Advance to the next player who has legal moves
+        attempts = 0
+        while not env.has_legal_moves(env.current_player) and attempts < 4:
+            env.current_player = (env.current_player + 1) % 4
+            attempts += 1
+            
+        # Check if game is over after skipping
+        env._check_game_over()
+        
+        if env.game_over:
+             game_data["game_over"] = True
+             game_data["winner"] = env.winner
+
+        return self.get_game_state(game_id)
 
     def get_piece_shapes(self) -> list[list[tuple[int, int]]]:
         """Get the shapes of all pieces."""
@@ -260,7 +364,25 @@ async def get_game_state(game_id: str):
 @app.post("/games/{game_id}/move", response_model=GameState, tags=["games"])
 async def make_move(game_id: str, move: PlayerMove):
     """Make a move in the game."""
-    return game_manager.make_move(game_id, move)
+    state = game_manager.make_move(game_id, move)
+    await broadcast_game_update(game_id, "Board updated")
+    return state
+
+
+@app.post("/games/{game_id}/ai-move", response_model=GameState, tags=["games"])
+async def make_ai_move(game_id: str):
+    """Trigger an AI move for the current player."""
+    state = game_manager.make_ai_move(game_id)
+    await broadcast_game_update(game_id, "AI moved")
+    return state
+
+
+@app.post("/games/{game_id}/skip", response_model=GameState, tags=["games"])
+async def skip_turn(game_id: str):
+    """Skip the current player's turn."""
+    state = game_manager.skip_turn(game_id)
+    await broadcast_game_update(game_id, "Player skipped")
+    return state
 
 
 @app.get("/pieces", tags=["pieces"])

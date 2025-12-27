@@ -22,3 +22,5 @@ frontend/*.log
 
 # Data files
 *.pkl
+**/games_log.txt
+**/games_logs.txt

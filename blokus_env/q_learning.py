@@ -341,7 +341,7 @@ class QLearningAgent:
                     break
 
                 # Execute action
-                next_state, reward, done, _, _ = env.step(action)
+                next_state, reward, done, truncated, _ = env.step(action)
 
                 # Update Q-table
                 self.update_q_table(
@@ -354,12 +354,10 @@ class QLearningAgent:
 
             # Update training statistics
             self.episodes += 1
-            if reward > 0:
-                self.wins += 1
-            elif reward < 0:
-                self.losses += 1
-            else:
+            if truncated:
                 self.ties += 1
+            elif done:
+                self.wins += 1
 
             # Decay exploration rate
             self.exploration_rate = max(
@@ -368,10 +366,11 @@ class QLearningAgent:
 
             # Update progress bar with current stats
             cache_stats = self.get_cache_stats()
+            state_count, _ = self.get_q_table_size()
             pbar.set_postfix({
-                "W/L/T": f"{self.wins}/{self.losses}/{self.ties}",
                 "Exploration": f"{self.exploration_rate:.6f}",
-                "CacheHit": f"{cache_stats['hit_rate']:.1%}"
+                "CacheHit": f"{cache_stats['hit_rate']:.1%}",
+                "States": state_count
             })
 
 

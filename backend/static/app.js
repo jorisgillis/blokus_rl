@@ -23,6 +23,10 @@ class BlokusGame {
         this.flipHorizontal = false;
         this.flipVertical = false;
         this.previewCells = [];
+        this.autoAi = false;
+        this.autoAiInterval = null;
+        this.socket = null;
+        this.pollingInterval = null;
 
         // Player colors
         this.playerColors = ['#3b82f6', '#eab308', '#ef4444', '#22c55e'];
@@ -76,6 +80,15 @@ class BlokusGame {
         document.getElementById('flipVerticalBtn').addEventListener('click', () => {
             this.flipVertical = !this.flipVertical;
             this.updateFlipDisplay();
+        });
+
+        // AI buttons
+        document.getElementById('aiMoveBtn').addEventListener('click', () => {
+            this.makeAiMove();
+        });
+
+        document.getElementById('autoAiBtn').addEventListener('click', () => {
+            this.toggleAutoAi();
         });
     }
 
@@ -350,8 +363,14 @@ class BlokusGame {
             document.getElementById('gameIdDisplay').classList.remove('hidden');
             document.getElementById('gameIdDisplay').querySelector('code').textContent = this.gameId;
 
-            // Load game state
-            await this.refreshGameState();
+            // Setup Websocket
+            this.initWebsocket();
+
+            // Show AI buttons
+            document.getElementById('aiMoveBtn').classList.remove('hidden');
+            document.getElementById('autoAiBtn').classList.remove('hidden');
+
+            this.showSuccess('Game created! Start playing.');
 
             // Reset UI
             btn.disabled = false;
@@ -361,8 +380,6 @@ class BlokusGame {
                 </svg>
                 New Game
             `;
-
-            this.showSuccess('Game created! Start playing.');
 
         } catch (error) {
             console.error('Error creating game:', error);
@@ -403,6 +420,104 @@ class BlokusGame {
 
         } catch (error) {
             console.error('Error refreshing game state:', error);
+        }
+    }
+
+    initWebsocket() {
+        if (this.socket) {
+            this.socket.close();
+        }
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/${this.gameId}`;
+
+        console.log(`Connecting to websocket: ${wsUrl}`);
+        this.socket = new WebSocket(wsUrl);
+
+        this.socket.onmessage = (event) => {
+            console.log('Websocket message received:', event.data);
+            this.refreshGameState();
+        };
+
+        this.socket.onclose = () => {
+            console.log('Websocket closed. Falling back to polling.');
+            if (!this.gameOver && this.gameId) {
+                // If websocket fails, use polling as fallback
+                if (!this.pollingInterval) {
+                    this.pollingInterval = setInterval(() => {
+                        if (!this.gameOver) {
+                            this.refreshGameState();
+                        } else {
+                            clearInterval(this.pollingInterval);
+                            this.pollingInterval = null;
+                        }
+                    }, 2000); // Poll every 2 seconds
+                }
+            }
+        };
+
+        this.socket.onerror = (error) => {
+            console.error('Websocket error:', error);
+        };
+    }
+
+    async makeAiMove() {
+        if (!this.gameId || this.gameOver) return;
+
+        try {
+            const btn = document.getElementById('aiMoveBtn');
+            btn.disabled = true;
+
+            const response = await fetch(`${this.API_BASE}/games/${this.gameId}/ai-move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'AI move failed');
+            }
+
+            // State will be updated via websocket, but we refresh anyway for safety
+            await this.refreshGameState();
+
+            btn.disabled = false;
+        } catch (error) {
+            console.error('AI move error:', error);
+            this.showError(error.message);
+            const btn = document.getElementById('aiMoveBtn');
+            btn.disabled = false;
+
+            // If AI failed (e.g. no moves), stop auto-ai
+            if (this.autoAi) {
+                this.toggleAutoAi();
+            }
+        }
+    }
+
+    toggleAutoAi() {
+        this.autoAi = !this.autoAi;
+        const btn = document.getElementById('autoAiBtn');
+
+        if (this.autoAi) {
+            btn.textContent = 'Auto AI: On';
+            btn.classList.add('pulse-slow');
+
+            // Start interval
+            this.autoAiInterval = setInterval(() => {
+                if (!this.gameOver) {
+                    this.makeAiMove();
+                } else {
+                    this.toggleAutoAi();
+                }
+            }, 1000);
+        } else {
+            btn.textContent = 'Auto AI: Off';
+            btn.classList.remove('pulse-slow');
+            if (this.autoAiInterval) {
+                clearInterval(this.autoAiInterval);
+                this.autoAiInterval = null;
+            }
         }
     }
 
@@ -510,6 +625,15 @@ class BlokusGame {
             this.updateFlipDisplay();
 
             // Update UI
+            // Update skip button visibility
+            const skipBtn = document.getElementById('skipTurnBtn');
+            if (skipBtn) {
+                // If the player has no moves but it's their turn, show skip
+                // Actually, the backend auto-skips, so this button is mostly a fallback
+                // or useful if the player thinks they are stuck.
+                skipBtn.classList.remove('hidden');
+            }
+
             this.updateBoard();
             this.updatePlayerInfo(state);
             this.updateStatus(state);
@@ -527,9 +651,33 @@ class BlokusGame {
     }
 
     async skipTurn() {
-        // Implementation for skipping turn
-        // This would need backend support
-        console.log('Skip turn not yet implemented');
+        if (!this.gameId || this.gameOver) return;
+
+        try {
+            const btn = document.getElementById('skipTurnBtn');
+            btn.disabled = true;
+
+            const response = await fetch(`${this.API_BASE}/games/${this.gameId}/skip`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Skip failed');
+            }
+
+            // State will be updated via websocket/polling
+            await this.refreshGameState();
+            this.showSuccess('Turn skipped');
+
+            btn.disabled = false;
+        } catch (error) {
+            console.error('Skip turn error:', error);
+            this.showError(error.message);
+            const btn = document.getElementById('skipTurnBtn');
+            btn.disabled = false;
+        }
     }
 
     showGameOver(state) {

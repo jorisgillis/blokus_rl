@@ -201,31 +201,59 @@ class BlokusEnv(gym.Env):
         if not self.first_piece_placed[self.current_player]:
             self.first_piece_placed[self.current_player] = True
 
-    def _calculate_reward(self, piece_index: int) -> float:
+    def _calculate_reward(self, piece_index: int, game_over: bool) -> float:
         """Calculate the reward for the current player."""
-        # Reward is positive based on squares placed
-        # Simple reward: 1.0 per square placed
+        # Base reward: 1.0 per square placed
         reward = float(len(self.pieces[piece_index]))
 
+        # Full clearance bonus
+        if sum(self.available_pieces[self.current_player]) == 0:
+            reward += 15.0
+            # Monomino bonus (piece index 0)
+            if piece_index == 0:
+                reward += 5.0
+
+        # Terminal rewards
+        if game_over:
+            if self.winner == self.current_player:
+                reward += 100.0  # Big win bonus
+            elif self.winner is None:
+                reward += 20.0   # Tie bonus
+            else:
+                reward -= 50.0   # Loss penalty
+
         return reward
+
+    def has_legal_moves(self, player: int) -> bool:
+        """Check if the player has any legal moves available."""
+        # Check if player has any available pieces
+        if not any(self.available_pieces[player]):
+            return False
+
+        # Get candidate positions based on game state
+        candidate_positions = self._get_candidate_positions(player)
+        if not candidate_positions:
+            return False
+
+        # Try all available pieces
+        for piece_index, available in enumerate(self.available_pieces[player]):
+            if available:
+                # Try all candidate positions
+                for x, y in candidate_positions:
+                    # Try all rotations and flips
+                    for rotation in range(4):
+                        for flip_h in [False, True]:
+                            for flip_v in [False, True]:
+                                if self._is_valid_placement(piece_index, x, y, rotation, flip_h, flip_v):
+                                    return True
+        return False
 
     def _check_game_over(self) -> bool:
         """Check if the game is over."""
         # Game is over if no player can make a legal move
         for player in range(4):
-            # Check if player has any available pieces
-            if any(self.available_pieces[player]):
-                # Check if any piece can be placed
-                for piece_index, available in enumerate(self.available_pieces[player]):
-                    if available:
-                        # Try all possible positions and rotations
-                        for x in range(20):
-                            for y in range(20):
-                                for rotation in range(4):
-                                    if self._is_valid_placement(
-                                        piece_index, x, y, rotation
-                                    ):
-                                        return False  # Game is not over
+            if self.has_legal_moves(player):
+                return False  # At least one player can still move
 
         # If we get here, no player can make a move
         self.game_over = True
@@ -263,6 +291,12 @@ class BlokusEnv(gym.Env):
         self.first_piece_placed = [False for _ in range(4)]
         self.game_over = False
         self.winner = None
+        
+        # Skip players if they have no moves at start
+        attempts = 0
+        while not self.has_legal_moves(self.current_player) and attempts < 4:
+            self.current_player = (self.current_player + 1) % 4
+            attempts += 1
         return self.board, {
             "current_player": self.current_player,
             "available_pieces": sum(self.available_pieces[self.current_player]),
@@ -387,15 +421,19 @@ class BlokusEnv(gym.Env):
         # Place the piece
         self._place_piece(piece_index, x, y, rotation, flip_h, flip_v)
 
-        # Calculate reward
-        reward = self._calculate_reward(piece_index)
-
-        # Check if game is over
+        # Check if game is over BEFORE calculating reward to include terminal bonus
         game_over = self._check_game_over()
 
-        # Switch to next player
-        self.current_player = (self.current_player + 1) % 4
-
+        # Calculate reward
+        reward = self._calculate_reward(piece_index, game_over)
+        if not game_over:
+            # Advance to the next player who has legal moves
+            self.current_player = (self.current_player + 1) % 4
+            attempts = 0
+            while not self.has_legal_moves(self.current_player) and attempts < 4:
+                self.current_player = (self.current_player + 1) % 4
+                attempts += 1
+        
         # Prepare info dictionary
         info = {
             "current_player": self.current_player,

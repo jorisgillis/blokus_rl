@@ -28,6 +28,12 @@ class BlokusGame {
         this.socket = null;
         this.pollingInterval = null;
 
+        // Replay State
+        this.history = [];
+        this.historyIndex = -1;
+        this.isReplaying = false;
+        this.replayInterval = null;
+
         // Player colors
         this.playerColors = ['#3b82f6', '#eab308', '#ef4444', '#22c55e'];
         this.playerNames = ['Blue', 'Yellow', 'Red', 'Green'];
@@ -55,6 +61,35 @@ class BlokusGame {
         // New game button
         document.getElementById('newGameBtn').addEventListener('click', () => {
             this.createNewGame();
+        });
+
+        // Close Modal Button
+        const closeBtn = document.getElementById('closeModalBtn');
+        if (closeBtn) {
+            closeBtn.onclick = () => {
+                console.log('Close button clicked');
+                document.getElementById('gameOverModal').classList.add('hidden');
+                this.startReplay();
+            };
+        }
+
+        // Replay Controls
+        document.getElementById('replayStartBtn').addEventListener('click', () => this.setReplayIndex(0));
+        document.getElementById('replayBackBtn').addEventListener('click', () => this.stepReplay(-1));
+        document.getElementById('replayPlayBtn').addEventListener('click', () => this.toggleReplay());
+        document.getElementById('replayForwardBtn').addEventListener('click', () => this.stepReplay(1));
+        document.getElementById('replayEndBtn').addEventListener('click', () => this.setReplayIndex(this.history.length - 1));
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (this.isReplaying) {
+                if (e.key === 'ArrowLeft') this.stepReplay(-1);
+                if (e.key === 'ArrowRight') this.stepReplay(1);
+                if (e.key === ' ') {
+                    e.preventDefault(); // Prevent scroll
+                    this.toggleReplay();
+                }
+            }
         });
 
         // Skip turn button
@@ -506,6 +541,16 @@ class BlokusGame {
 
             btn.disabled = false;
         } catch (error) {
+            // Ignore "Game already over" error as it's expected at the end
+            if (error.message.includes('Game already over')) {
+                console.log('AI Move stopped: Game is over');
+                this.gameOver = true;
+                if (this.autoAi) {
+                    this.toggleAutoAi();
+                }
+                return;
+            }
+
             console.error('AI move error:', error);
             this.showError(error.message);
             const btn = document.getElementById('aiMoveBtn');
@@ -516,36 +561,110 @@ class BlokusGame {
                 this.toggleAutoAi();
             }
         }
+
     }
 
-    toggleAutoAi() {
-        this.autoAi = !this.autoAi;
-        const btn = document.getElementById('autoAiBtn');
 
-        if (this.autoAi) {
-            btn.textContent = 'Auto AI: On';
-            btn.classList.add('pulse-slow');
+    async startReplay() {
+        if (!this.gameId) return;
 
-            // Start interval
-            this.autoAiInterval = setInterval(() => {
-                if (!this.gameOver) {
-                    this.makeAiMove();
-                } else {
-                    this.toggleAutoAi();
-                }
-            }, 1000);
-        } else {
-            btn.textContent = 'Auto AI: Off';
-            btn.classList.remove('pulse-slow');
-            if (this.autoAiInterval) {
-                clearInterval(this.autoAiInterval);
-                this.autoAiInterval = null;
-            }
+        try {
+            // Fetch history
+            const response = await fetch(`${this.API_BASE}/games/${this.gameId}/history`);
+            if (!response.ok) throw new Error('Failed to fetch history');
+
+            this.history = await response.json();
+            this.isReplaying = true;
+            this.historyIndex = this.history.length - 1; // Start at end
+
+            // Show controls
+            document.getElementById('replayControls').classList.remove('hidden');
+
+            this.updateReplayUI();
+
+        } catch (error) {
+            console.error('Error starting replay:', error);
+            this.showError(`Replay Failed: ${error.message}`);
         }
     }
 
-    updateBoard() {
-        if (!this.board) return;
+    setReplayIndex(index) {
+        if (!this.isReplaying || !this.history.length) return;
+
+        // Clamp index
+        this.historyIndex = Math.max(0, Math.min(index, this.history.length - 1));
+
+        this.updateReplayState();
+    }
+
+    stepReplay(delta) {
+        this.setReplayIndex(this.historyIndex + delta);
+    }
+
+    toggleReplay() {
+        if (this.replayInterval) {
+            // Pause
+            clearInterval(this.replayInterval);
+            this.replayInterval = null;
+        } else {
+            // Play
+            if (this.historyIndex >= this.history.length - 1) {
+                this.historyIndex = -1; // Loop back to start if at end
+            }
+
+            this.stepReplay(1); // Make first move immediately
+
+            this.replayInterval = setInterval(() => {
+                if (this.historyIndex >= this.history.length - 1) {
+                    this.toggleReplay(); // Stop at end
+                } else {
+                    this.stepReplay(1);
+                }
+            }, 1000); // 1 state per second
+        }
+        this.updateReplayUI();
+    }
+
+    updateReplayState() {
+        if (!this.history[this.historyIndex]) return;
+
+        const state = this.history[this.historyIndex];
+
+        // Update Board using history state
+        this.updateBoard(state.board);
+
+        // Update UI elements from history state
+        this.updatePlayerInfo(state); // Ensure this method handles the history state format
+        // Scores are in state.scores, players... we assume players don't change names/types
+        // But history state might have slightly different structure? 
+        // Backend history snapshot: {board, current_player, scores, remaining_pieces...}
+        // Our updatePlayerInfo expects {players, remaining_pieces, scores}
+        // HISTORY SNAPSHOT has 'remaining_pieces' and 'scores'. It might miss 'players' list.
+        // We can reuse this.players if not present.
+
+        const uiState = {
+            ...state,
+            players: this.players, // Use current static player info
+        };
+        this.updatePlayerInfo(uiState);
+    }
+
+    updateReplayUI() {
+        const playIcon = document.getElementById('playIcon');
+        const pauseIcon = document.getElementById('pauseIcon');
+
+        if (this.replayInterval) {
+            playIcon.classList.add('hidden');
+            pauseIcon.classList.remove('hidden');
+        } else {
+            playIcon.classList.remove('hidden');
+            pauseIcon.classList.add('hidden');
+        }
+    }
+
+    updateBoard(boardData = null) {
+        const boardToRender = boardData || this.board;
+        if (!boardToRender) return;
 
         // Update all cells
         for (let row = 0; row < 20; row++) {
@@ -556,7 +675,7 @@ class BlokusGame {
                 // Check which player occupies this cell
                 let occupied = false;
                 for (let player = 0; player < 4; player++) {
-                    if (this.board[row][col][player] === 1) {
+                    if (boardToRender[row][col][player] === 1) {
                         cell.classList.add('occupied');
                         cell.style.color = this.playerColors[player];
                         occupied = true;

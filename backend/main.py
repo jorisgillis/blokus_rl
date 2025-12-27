@@ -186,8 +186,13 @@ class GameManager:
             "scores": [0, 0, 0, 0],
             "game_over": False,
             "winner": None,
+            "winner": None,
             "current_player": 0,
+            "history": [],  # List of game states
         }
+
+        # methods to capture history
+        self._capture_history(game_id)
  
         return game_id
 
@@ -265,6 +270,14 @@ class GameManager:
                 game_data["game_over"] = True
                 game_data["winner"] = env.winner
 
+            # Update game state
+            if done:
+                game_data["game_over"] = True
+                game_data["winner"] = env.winner
+
+            # Capture history
+            self._capture_history(game_id)
+
             return self.get_game_state(game_id)
 
         except Exception as e:
@@ -280,6 +293,11 @@ class GameManager:
 
         if env.game_over:
             raise HTTPException(status_code=400, detail="Game already over")
+
+        # Verify that the current player is an AI
+        current_player_info = game_data["players"][env.current_player]
+        if current_player_info["type"] != "ai":
+             raise HTTPException(status_code=400, detail="Current player is not an AI")
 
         # Choose action
         action = AI_AGENT.choose_action(env, game_data["state"], env.current_player, training=False)
@@ -330,8 +348,10 @@ class GameManager:
         env._check_game_over()
         
         if env.game_over:
-             game_data["game_over"] = True
              game_data["winner"] = env.winner
+
+        # Capture history
+        self._capture_history(game_id)
 
         return self.get_game_state(game_id)
 
@@ -339,6 +359,37 @@ class GameManager:
         """Get the shapes of all pieces."""
         env = BlokusEnv()
         return env.pieces
+
+    def _capture_history(self, game_id: str):
+        """Capture the current game state into history."""
+        game_data = self.games[game_id]
+        env = game_data["env"]
+        
+        # Deep copy the board to avoid reference issues
+        board_copy = env.board.copy().tolist()
+        
+        # Calculate current scores
+        scores = []
+        for player_id in range(4):
+            scores.append(int(np.sum(env.board[:, :, player_id])))
+
+        snapshot = {
+            "board": board_copy,
+            "current_player": env.current_player,
+            "scores": scores,
+            "remaining_pieces": [row[:] for row in env.available_pieces], # Deep copy
+            "game_over": env.game_over,
+            "winner": env.winner,
+            "prev_action": None # Could add last action details here if needed
+        }
+        
+        game_data["history"].append(snapshot)
+
+    def get_game_history(self, game_id: str) -> list[dict]:
+        """Get the history of a game."""
+        if game_id not in self.games:
+            raise HTTPException(status_code=404, detail="Game not found")
+        return self.games[game_id]["history"]
 
 
 # Game manager instance
@@ -357,6 +408,7 @@ async def api_root():
             "/games/{game_id}": "Get game state",
             "/games/{game_id}/move": "Make a move",
             "/pieces": "Get piece shapes",
+            "/games/{game_id}/history": "Get game history",
         },
     }
 
@@ -400,6 +452,12 @@ async def skip_turn(game_id: str):
     state = game_manager.skip_turn(game_id)
     await broadcast_game_update(game_id, "Player skipped")
     return state
+
+
+@app.get("/games/{game_id}/history", tags=["games"])
+async def get_game_history(game_id: str):
+    """Get the full history of a game."""
+    return game_manager.get_game_history(game_id)
 
 
 @app.get("/pieces", tags=["pieces"])

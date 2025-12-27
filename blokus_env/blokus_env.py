@@ -4,6 +4,11 @@ from gymnasium import spaces
 
 
 class BlokusEnv(gym.Env):
+    # Class-level cache for masks
+    piece_masks = None
+    piece_adj_masks = None
+    piece_corner_masks = None
+
     def __init__(self) -> None:
         super().__init__()
         # Define the action and observation spaces
@@ -21,9 +26,27 @@ class BlokusEnv(gym.Env):
 
         # Initialize the board
         self.board = np.zeros((20, 20, 4), dtype=np.uint8)
+        
+        # Bitboard representation (20x20 = 400 bits)
+        # Each integer is a 400-bit bitmask
+        self.player_bitboards = [0] * 4
+        self.total_bitboard = 0
+
+        # Track where same-color pieces cannot touch (edges) and where they MUST touch (corners)
+        self.player_edge_masks = [0] * 4
+        self.player_corner_masks = [0] * 4
 
         # Initialize the pieces
         self.pieces = self._initialize_pieces()
+        
+        # Pre-compute piece bitmasks for all orientations and positions
+        # Use class-level cache if available
+        if BlokusEnv.piece_masks is None:
+            BlokusEnv.piece_masks, BlokusEnv.piece_adj_masks, BlokusEnv.piece_corner_masks = self._precompute_piece_masks()
+            
+        self.piece_masks = BlokusEnv.piece_masks
+        self.piece_adj_masks = BlokusEnv.piece_adj_masks
+        self.piece_corner_masks = BlokusEnv.piece_corner_masks
 
         # Initialize the current player
         self.current_player = 0
@@ -84,6 +107,86 @@ class BlokusEnv(gym.Env):
         pieces.append([(0, 1), (1, 0), (1, 1), (1, 2), (2, 1)])
         return pieces
 
+        pieces.append([(0, 1), (1, 0), (1, 1), (1, 2), (2, 1)])
+        return pieces
+
+    def _precompute_piece_masks(self):
+        """Pre-compute bitmasks for all pieces, orientations, and positions."""
+        # 21 pieces, 16 orientations (4 rotations * 2 flip_h * 2 flip_v)
+        masks = [[[[0] * 20 for _ in range(20)] for _ in range(16)] for _ in range(21)]
+        adj_masks = [[[[0] * 20 for _ in range(20)] for _ in range(16)] for _ in range(21)]
+        corner_masks = [[[[0] * 20 for _ in range(20)] for _ in range(16)] for _ in range(21)]
+
+        for piece_id in range(21):
+            for rotation in range(4):
+                for flip_h in [0, 1]:
+                    for flip_v in [0, 1]:
+                        orientation_idx = (rotation << 2) | (flip_h << 1) | flip_v
+                        
+                        # Get base coordinates relative to (0,0)
+                        base_coords = self._get_piece_coordinates(piece_id, 0, 0, rotation, bool(flip_h), bool(flip_v))
+                        
+                        # Determine valid placement range
+                        min_x = min(x for x, y in base_coords)
+                        max_x = max(x for x, y in base_coords)
+                        min_y = min(y for x, y in base_coords)
+                        max_y = max(y for x, y in base_coords)
+                        
+                        # Calculate relative sets ONCE
+                        piece_cells_rel = set(base_coords)
+                        adj_cells_rel = set()
+                        corner_cells_rel = set()
+                        
+                        for px, py in piece_cells_rel:
+                            # Edges
+                            for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                                ax, ay = px + dx, py + dy
+                                if (ax, ay) not in piece_cells_rel:
+                                    adj_cells_rel.add((ax, ay))
+                            # Corners
+                            for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
+                                cx, cy = px + dx, py + dy
+                                if (cx, cy) not in piece_cells_rel:
+                                    corner_cells_rel.add((cx, cy))
+                        
+                        # Iterate only over valid board positions
+                        # valid x: 0 <= x + min_x  AND  x + max_x < 20
+                        # => -min_x <= x < 20 - max_x
+                        start_x = max(0, -min_x)
+                        end_x = 20 - max_x
+                        
+                        start_y = max(0, -min_y)
+                        end_y = 20 - max_y
+                        
+                        for x in range(start_x, end_x):
+                            for y in range(start_y, end_y):
+                                # Logic: mask |= 1 << ((y+py)*20 + (x+px))
+                                # Optimized: shift = y*20 + x. 
+                                # But we typically use (y+py)*20 ... 
+                                # Let's stick to accumulating bits to be safe and clear
+                                
+                                piece_mask = 0
+                                for px, py in piece_cells_rel:
+                                    piece_mask |= (1 << ((y + py) * 20 + (x + px)))
+                                masks[piece_id][orientation_idx][x][y] = piece_mask
+
+                                adj_mask = 0
+                                for ax, ay in adj_cells_rel:
+                                    nx, ny = x + ax, y + ay
+                                    # Adjacency can fall off board, ignore those bits
+                                    if 0 <= nx < 20 and 0 <= ny < 20:
+                                        adj_mask |= (1 << (ny * 20 + nx))
+                                adj_masks[piece_id][orientation_idx][x][y] = adj_mask
+                                
+                                corner_mask = 0
+                                for cx, cy in corner_cells_rel:
+                                    nx, ny = x + cx, y + cy
+                                    if 0 <= nx < 20 and 0 <= ny < 20:
+                                        corner_mask |= (1 << (ny * 20 + nx))
+                                corner_masks[piece_id][orientation_idx][x][y] = corner_mask
+
+        return masks, adj_masks, corner_masks
+
     def _get_piece_coordinates(
         self, piece_index: int, x: int, y: int, rotation: int, 
         flip_horizontal: bool = False, flip_vertical: bool = False
@@ -119,79 +222,67 @@ class BlokusEnv(gym.Env):
 
         return absolute_coords
 
-    def _is_valid_placement(
-        self, piece_index: int, x: int, y: int, rotation: int,
-        flip_horizontal: bool = False, flip_vertical: bool = False
-    ) -> bool:
-        """Check if a piece can be placed at the given position, rotation, and flips."""
-        # Get the absolute coordinates of the piece
-        coords = self._get_piece_coordinates(piece_index, x, y, rotation, flip_horizontal, flip_vertical)
+    def _is_valid_placement(self, piece_index: int, x: int, y: int, rotation: int, 
+                           flip_h: bool = False, flip_v: bool = False, player: int = None) -> bool:
+        """Check if a piece placement is valid using bitboards."""
+        if player is None:
+            player = self.current_player
+            
+        orientation_idx = (rotation << 2) | (int(flip_h) << 1) | int(flip_v)
+        piece_mask = self.piece_masks[piece_index][orientation_idx][x][y]
+        
+        # 1. Check if out of bounds (mask is 0 if any part was OOB during pre-computation)
+        if piece_mask == 0:
+            return False
 
-        # Check if the piece is within the board boundaries
-        for x, y in coords:
-            if x < 0 or x >= 20 or y < 0 or y >= 20:
+        # 2. Check if overlapping with ANY existing pieces
+        if (piece_mask & self.total_bitboard) != 0:
+            return False
+
+        # 3. Check official Blokus rules
+        if self.first_piece_placed[player]:
+            # Rule: Must NOT touch edges of same-color pieces.
+            # Implementation: piece_mask & self.player_edge_masks[player] == 0
+            if (piece_mask & self.player_edge_masks[player]) != 0:
                 return False
-
-        # Check if the piece overlaps with any existing pieces (all players)
-        for x, y in coords:
-            if np.any(self.board[x, y, :] == 1):
+                
+            # Rule: Must touch at least one corner of a same-color piece.
+            # Implementation: piece_mask & self.player_corner_masks[player] != 0
+            if (piece_mask & self.player_corner_masks[player]) == 0:
                 return False
-
-        # Check if the piece touches edges of same-color pieces (except for first piece)
-        if self.first_piece_placed[self.current_player]:
-            for x, y in coords:
-                # Check adjacent cells (up, down, left, right)
-                for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-                    nx, ny = x + dx, y + dy
-                    if 0 <= nx < 20 and 0 <= ny < 20:
-                        if self.board[nx, ny, self.current_player] == 1:
-                            return False
-
-        # Check if the piece touches corners of same-color pieces (for non-first pieces)
-        if self.first_piece_placed[self.current_player]:
-            has_corner_contact = False
-            for x, y in coords:
-                # Check diagonal cells (corners)
-                for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
-                    nx, ny = x + dx, y + dy
-                    if 0 <= nx < 20 and 0 <= ny < 20:
-                        if self.board[nx, ny, self.current_player] == 1:
-                            has_corner_contact = True
-                            break
-                if has_corner_contact:
-                    break
-
-            if not has_corner_contact:
-                return False
-
-        # For first piece, check if it's in the correct corner
-        if not self.first_piece_placed[self.current_player]:
-            player_corner = {
-                0: (0, 0),  # Blue: top-left
-                1: (0, 19),  # Yellow: top-right
-                2: (19, 19),  # Red: bottom-right
-                3: (19, 0),  # Green: bottom-left
-            }[self.current_player]
-
-            # Check if any part of the piece is in the corner
-            corner_touched = False
-            for x, y in coords:
-                if (x, y) == player_corner:
-                    corner_touched = True
-                    break
-
-            if not corner_touched:
+        else:
+            # First piece: must touch the starting corner
+            # Map (x,y) to bit index: y * 20 + x
+            player_corner_bit_idx = {
+                0: 0 * 20 + 0,    # (0,0)   - Top-Left (Blue)
+                1: 19 * 20 + 0,   # (0,19)  - Top-Right (Yellow) -> Bit 380 (19*20 + 0)
+                2: 19 * 20 + 19,  # (19,19) - Bottom-Right (Red)
+                3: 0 * 20 + 19,   # (19,0)  - Bottom-Left (Green) -> Bit 19 (0*20 + 19)
+            }[player]
+            corner_bit = 1 << player_corner_bit_idx
+            if (piece_mask & corner_bit) == 0:
                 return False
 
         return True
 
     def _place_piece(self, piece_index: int, x: int, y: int, rotation: int,
                      flip_horizontal: bool = False, flip_vertical: bool = False) -> None:
-        """Place a piece on the board."""
-        coords = self._get_piece_coordinates(piece_index, x, y, rotation, flip_horizontal, flip_vertical)
+        """Place a piece on the board and update bitboards."""
+        orientation_idx = (rotation << 2) | (int(flip_horizontal) << 1) | int(flip_vertical)
+        piece_mask = self.piece_masks[piece_index][orientation_idx][x][y]
+        
+        # Update bitboards
+        self.player_bitboards[self.current_player] |= piece_mask
+        self.total_bitboard |= piece_mask
+        
+        # Update adjacency and corner bitboards for this player
+        self.player_edge_masks[self.current_player] |= self.piece_adj_masks[piece_index][orientation_idx][x][y]
+        self.player_corner_masks[self.current_player] |= self.piece_corner_masks[piece_index][orientation_idx][x][y]
 
-        for x, y in coords:
-            self.board[x, y, self.current_player] = 1
+        # Sync with numpy board for rendering/other logic
+        coords = self._get_piece_coordinates(piece_index, x, y, rotation, flip_horizontal, flip_vertical)
+        for px, py in coords:
+            self.board[px, py, self.current_player] = 1
 
         # Mark the piece as unavailable
         if self.available_pieces[self.current_player][piece_index]:
@@ -244,7 +335,7 @@ class BlokusEnv(gym.Env):
                     for rotation in range(4):
                         for flip_h in [False, True]:
                             for flip_v in [False, True]:
-                                if self._is_valid_placement(piece_index, x, y, rotation, flip_h, flip_v):
+                                if self._is_valid_placement(piece_index, x, y, rotation, flip_h, flip_v, player):
                                     return True
         return False
 
@@ -279,16 +370,20 @@ class BlokusEnv(gym.Env):
 
         return True
 
-    def reset(
-        self, *, seed: int | None = None, options: dict | None = None
-    ) -> tuple[np.ndarray, dict]:
-        # Reset the board and pieces
+    def reset(self, seed: int | None = None, options: dict | None = None) -> tuple[np.ndarray, dict]:
+        """Reset the environment."""
         super().reset(seed=seed)
         self.board = np.zeros((20, 20, 4), dtype=np.uint8)
-        self.pieces = self._initialize_pieces()
-        self.current_player = 0
+        self.player_bitboards = [0] * 4
+        self.total_bitboard = 0
+        
+        # Track where same-color pieces cannot touch (edges) and where they MUST touch (corners)
+        self.player_edge_masks = [0] * 4
+        self.player_corner_masks = [0] * 4
+
         self.available_pieces = [[True] * 21 for _ in range(4)]
-        self.first_piece_placed = [False for _ in range(4)]
+        self.first_piece_placed = [False] * 4
+        self.current_player = 0
         self.game_over = False
         self.winner = None
         
@@ -316,7 +411,7 @@ class BlokusEnv(gym.Env):
                 # Try all candidate positions and rotations
                 for x, y in candidate_positions:
                     for rotation in range(4):
-                        if self._is_valid_placement(piece_index, x, y, rotation):
+                        if self._is_valid_placement(piece_index, x, y, rotation, player=player):
                             legal_actions.append((piece_index, x, y, rotation))
 
         return legal_actions

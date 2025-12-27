@@ -32,7 +32,7 @@ def q_learning(args: Namespace) -> None:
 
     # Train the agent
     print(f"Training Q-learning agent for {args.episodes} episodes...")
-    agent.train(episodes=args.episodes, max_steps=50)
+    agent.train(episodes=args.episodes, max_steps=50, parallel=args.parallel)
 
     # Save the trained agent
     if args.save:
@@ -129,10 +129,10 @@ def parse_arguments():
         "--render", action="store_true", help="Render game during Q-learning training"
     )
     parser.add_argument(
-        "--optimized",
+        "--parallel",
         action="store_true",
-        default=True,
-        help="Use optimized Q-learning agent (faster but uses more memory)",
+        default=False,
+        help="Use parallel Q-learning agent (faster but uses more memory)",
     )
 
     return parser.parse_args()

@@ -356,8 +356,10 @@ class QLearningAgent:
             self.episodes += 1
             if truncated:
                 self.ties += 1
-            elif done:
+            elif done and env.current_player == 0 and reward > 100:
                 self.wins += 1
+            else:
+                self.losses += 1
 
             # Decay exploration rate
             self.exploration_rate = max(

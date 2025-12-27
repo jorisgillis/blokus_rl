@@ -53,9 +53,9 @@ class BlokusEnv(gym.Env):
         pieces.append([(0, 0), (0, 1), (0, 2)])
         # Tetrominoes
         pieces.append([(0, 0), (0, 1), (0, 2), (1, 0)])
-        pieces.append([(0, 0), (0, 1), (0, 2), (1, 2)])
+        pieces.append([(0, 0), (0, 1), (0, 2), (0, 3)])
         pieces.append([(0, 0), (0, 1), (1, 1), (1, 2)])
-        pieces.append([(0, 0), (1, 0), (1, 1), (1, 2)])
+        pieces.append([(0, 0), (0, 1), (0, 2), (1, 1)])
         pieces.append([(0, 0), (0, 1), (1, 0), (1, 1)])
         # Pentominoes
         # F Pentomino
@@ -67,7 +67,7 @@ class BlokusEnv(gym.Env):
         # P Pentomino
         pieces.append([(0, 0), (0, 1), (1, 0), (1, 1), (2, 0)])
         # Y Pentomino
-        pieces.append([(0, 1), (1, 0), (1, 1), (1, 2), (2, 1)])
+        pieces.append([(0, 0), (1, 0), (2, 0), (3, 0), (1, 1)])
         # T Pentomino
         pieces.append([(0, 0), (0, 1), (0, 2), (1, 1), (2, 1)])
         # U Pentomino

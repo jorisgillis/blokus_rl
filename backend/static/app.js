@@ -347,9 +347,22 @@ class BlokusGame {
             btn.disabled = true;
             btn.innerHTML = '<span class="loading-dots">Creating game</span>';
 
+            // Collect player configurations
+            const playerConfigs = [];
+            for (let i = 0; i < 4; i++) {
+                const typeEl = document.getElementById(`player-${i}-type`);
+                if (typeEl) {
+                    playerConfigs.push({
+                        player_id: i,
+                        type: typeEl.value
+                    });
+                }
+            }
+
             const response = await fetch(`${this.API_BASE}/games`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' }
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ player_configs: playerConfigs })
             });
 
             if (!response.ok) throw new Error('Failed to create game');
@@ -371,6 +384,9 @@ class BlokusGame {
             document.getElementById('autoAiBtn').classList.remove('hidden');
 
             this.showSuccess('Game created! Start playing.');
+
+            // Load initial state
+            await this.refreshGameState();
 
             // Reset UI
             btn.disabled = false;
@@ -412,6 +428,13 @@ class BlokusGame {
             this.updatePlayerInfo(state);
             this.updateStatus(state);
             this.renderPiecesPalette(); // Update piece colors
+
+            // Automatically make AI move if current player is AI
+            const currentPlayerObj = state.players[this.currentPlayer];
+            if (currentPlayerObj && currentPlayerObj.type === 'ai' && !this.gameOver) {
+                // Delay slightly for better UX
+                setTimeout(() => this.makeAiMove(), 500);
+            }
 
             // Check for game over
             if (this.gameOver) {
@@ -568,6 +591,20 @@ class BlokusGame {
 
             // Update score
             document.getElementById(`score-${index}`).textContent = state.scores[index];
+
+            // Update player type badge
+            const nameEl = playerDiv.querySelector('.font-bold');
+            if (nameEl) {
+                const existingBadge = nameEl.querySelector('.ai-badge');
+                if (existingBadge) existingBadge.remove();
+
+                if (state.players[index].type === 'ai') {
+                    const badge = document.createElement('span');
+                    badge.className = 'ai-badge ml-2 px-1.5 py-0.5 bg-purple-100 text-purple-700 text-[10px] rounded uppercase font-bold';
+                    badge.textContent = 'AI';
+                    nameEl.appendChild(badge);
+                }
+            }
         });
     }
 

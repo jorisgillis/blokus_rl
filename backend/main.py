@@ -97,6 +97,15 @@ class GameCreateResponse(BaseModel):
     message: str
 
 
+class PlayerConfig(BaseModel):
+    player_id: int
+    type: str  # "human" or "ai"
+
+
+class GameCreateRequest(BaseModel):
+    player_configs: list[PlayerConfig] | None = None
+
+
 class ErrorResponse(BaseModel):
     error: str
     details: str | None
@@ -148,23 +157,30 @@ class GameManager:
         ]
         self.logger = GameLogger()
 
-    def create_game(self) -> str:
+    def create_game(self, player_configs: list[PlayerConfig] | None = None) -> str:
         """Create a new game and return the game ID."""
         game_id = str(uuid.uuid4())
-
+ 
         # Initialize game environment
         env = BlokusEnv()
         state, _ = env.reset()
 
+        # Default: all human
+        player_types = ["human"] * 4
+        if player_configs:
+            for config in player_configs:
+                if 0 <= config.player_id < 4:
+                    player_types[config.player_id] = config.type
+ 
         # Store game data
         self.games[game_id] = {
             "env": env,
             "state": state,
             "players": [
-                {"id": "0", "name": self.player_names[0], "color": self.player_colors[0]},
-                {"id": "1", "name": self.player_names[1], "color": self.player_colors[1]},
-                {"id": "2", "name": self.player_names[2], "color": self.player_colors[2]},
-                {"id": "3", "name": self.player_names[3], "color": self.player_colors[3]},
+                {"id": "0", "name": self.player_names[0], "color": self.player_colors[0], "type": player_types[0]},
+                {"id": "1", "name": self.player_names[1], "color": self.player_colors[1], "type": player_types[1]},
+                {"id": "2", "name": self.player_names[2], "color": self.player_colors[2], "type": player_types[2]},
+                {"id": "3", "name": self.player_names[3], "color": self.player_colors[3], "type": player_types[3]},
             ],
             "remaining_pieces": env.available_pieces,
             "scores": [0, 0, 0, 0],
@@ -172,7 +188,7 @@ class GameManager:
             "winner": None,
             "current_player": 0,
         }
-
+ 
         return game_id
 
     def get_game_state(self, game_id: str) -> dict:
@@ -346,9 +362,10 @@ async def api_root():
 
 
 @app.post("/games", response_model=GameCreateResponse, tags=["games"])
-async def create_game():
+async def create_game(request: GameCreateRequest | None = None):
     """Create a new game."""
-    game_id = game_manager.create_game()
+    player_configs = request.player_configs if request else None
+    game_id = game_manager.create_game(player_configs)
     return {
         "game_id": game_id,
         "message": f"Game created successfully. Use this ID: {game_id}",
@@ -471,7 +488,7 @@ if __name__ == "__main__":
             port=8000,
             log_level="info",
             access_log=True,
-            reload=True,
+            reload=False,
         )
     except Exception as e:
         logger.error(f"Failed to start backend: {e}")
